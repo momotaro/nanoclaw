@@ -26,6 +26,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
+import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -226,6 +227,42 @@ function buildContainerArgs(
     '-e',
     `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
   );
+
+  // Forward OANDA credentials for FX advisor skill
+  const oandaEnv = readEnvFile(['OANDA_API_TOKEN', 'OANDA_ACCOUNT_ID']);
+  if (oandaEnv.OANDA_API_TOKEN) {
+    args.push('-e', `OANDA_API_TOKEN=${oandaEnv.OANDA_API_TOKEN}`);
+  }
+  if (oandaEnv.OANDA_ACCOUNT_ID) {
+    args.push('-e', `OANDA_ACCOUNT_ID=${oandaEnv.OANDA_ACCOUNT_ID}`);
+  }
+
+  // Forward model overrides so the SDK uses the correct model name
+  // (e.g. when routing through a non-Anthropic API like Kimi/Moonshot)
+  const modelEnv = readEnvFile([
+    'ANTHROPIC_MODEL',
+    'ANTHROPIC_SMALL_FAST_MODEL',
+    'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+    'ENABLE_TOOL_SEARCH',
+  ]);
+  if (modelEnv.ANTHROPIC_MODEL) {
+    args.push('-e', `ANTHROPIC_MODEL=${modelEnv.ANTHROPIC_MODEL}`);
+  }
+  if (modelEnv.ANTHROPIC_SMALL_FAST_MODEL) {
+    args.push(
+      '-e',
+      `ANTHROPIC_SMALL_FAST_MODEL=${modelEnv.ANTHROPIC_SMALL_FAST_MODEL}`,
+    );
+  }
+  if (modelEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC) {
+    args.push(
+      '-e',
+      `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=${modelEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC}`,
+    );
+  }
+  if (modelEnv.ENABLE_TOOL_SEARCH) {
+    args.push('-e', `ENABLE_TOOL_SEARCH=${modelEnv.ENABLE_TOOL_SEARCH}`);
+  }
 
   // Mirror the host's auth method with a placeholder value.
   // API key mode: SDK sends x-api-key, proxy replaces with real key.
