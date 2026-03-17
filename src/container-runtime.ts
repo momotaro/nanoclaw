@@ -9,7 +9,7 @@ import os from 'os';
 import { logger } from './logger.js';
 
 /** The container runtime binary name. */
-export const CONTAINER_RUNTIME_BIN = 'container';
+export const CONTAINER_RUNTIME_BIN = os.platform() === 'darwin' ? 'container' : 'docker';
 
 /** Hostname containers use to reach the host machine. */
 export const CONTAINER_HOST_GATEWAY = 'host.docker.internal';
@@ -61,6 +61,34 @@ export function stopContainer(name: string): string {
 
 /** Ensure the container runtime is running, starting it if needed. */
 export function ensureContainerRuntimeRunning(): void {
+  if (CONTAINER_RUNTIME_BIN === 'docker') {
+    // Docker: just check that the daemon is reachable
+    try {
+      execSync('docker info', { stdio: 'pipe', timeout: 10000 });
+      logger.debug('Docker daemon is running');
+      return;
+    } catch (err) {
+      logger.error({ err }, 'Docker daemon is not reachable');
+      console.error(
+        '\n╔════════════════════════════════════════════════════════════════╗',
+      );
+      console.error(
+        '║  FATAL: Docker daemon is not running                           ║',
+      );
+      console.error(
+        '║                                                                ║',
+      );
+      console.error(
+        '║  Start Docker and restart NanoClaw.                            ║',
+      );
+      console.error(
+        '╚════════════════════════════════════════════════════════════════╝\n',
+      );
+      throw new Error('Container runtime is required but failed to start');
+    }
+  }
+
+  // Apple Container path
   try {
     execSync(`${CONTAINER_RUNTIME_BIN} system status`, { stdio: 'pipe' });
     logger.debug('Container runtime already running');
@@ -103,21 +131,39 @@ export function ensureContainerRuntimeRunning(): void {
 /** Kill orphaned NanoClaw containers from previous runs. */
 export function cleanupOrphans(): void {
   try {
-    const output = execSync(`${CONTAINER_RUNTIME_BIN} ls --format json`, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      encoding: 'utf-8',
-    });
-    const containers: { status: string; configuration: { id: string } }[] = JSON.parse(output || '[]');
-    const orphans = containers
-      .filter((c) => c.status === 'running' && c.configuration.id.startsWith('nanoclaw-'))
-      .map((c) => c.configuration.id);
-    for (const name of orphans) {
-      try {
-        execSync(stopContainer(name), { stdio: 'pipe' });
-      } catch { /* already stopped */ }
-    }
-    if (orphans.length > 0) {
-      logger.info({ count: orphans.length, names: orphans }, 'Stopped orphaned containers');
+    if (CONTAINER_RUNTIME_BIN === 'docker') {
+      // Docker: use --format to get names, one per line
+      const output = execSync(
+        `docker ps --filter "name=nanoclaw-" --format "{{.Names}}"`,
+        { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' },
+      );
+      const orphans = output.trim().split('\n').filter(Boolean);
+      for (const name of orphans) {
+        try {
+          execSync(stopContainer(name), { stdio: 'pipe' });
+        } catch { /* already stopped */ }
+      }
+      if (orphans.length > 0) {
+        logger.info({ count: orphans.length, names: orphans }, 'Stopped orphaned containers');
+      }
+    } else {
+      // Apple Container
+      const output = execSync(`${CONTAINER_RUNTIME_BIN} ls --format json`, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        encoding: 'utf-8',
+      });
+      const containers: { status: string; configuration: { id: string } }[] = JSON.parse(output || '[]');
+      const orphans = containers
+        .filter((c) => c.status === 'running' && c.configuration.id.startsWith('nanoclaw-'))
+        .map((c) => c.configuration.id);
+      for (const name of orphans) {
+        try {
+          execSync(stopContainer(name), { stdio: 'pipe' });
+        } catch { /* already stopped */ }
+      }
+      if (orphans.length > 0) {
+        logger.info({ count: orphans.length, names: orphans }, 'Stopped orphaned containers');
+      }
     }
   } catch (err) {
     logger.warn({ err }, 'Failed to clean up orphaned containers');
